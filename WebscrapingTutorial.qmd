@@ -1,0 +1,382 @@
+---
+format:
+  html:
+    code-overflow: wrap
+title: "Web scraping tutorial!"
+author: "Julian"
+theme: cerulean
+editor: visual
+---
+
+Web scraping uses css elements on a website to take information (or whatever). Use inspect element to select different parts of a page.
+
+I recommend pasting this code into a document of your own and following along. You can also download my [Quarto document]() and some extra web scraping examples on my GitHub.
+
+# Libraries
+
+```{r message = FALSE, warning = FALSE}
+library(rvest)
+library(tidyverse) # can also use base R
+```
+
+::: {.panel-tabset .nav-pills}
+## Example 1: very easy
+
+Using [Thriftbooks](https://www.thriftbooks.com/b/thriftbooks-deals/)
+
+**Load page**
+
+```{r message = FALSE}
+url <- "https://www.thriftbooks.com/b/thriftbooks-deals/" # set the url that you are using
+webpage <- read_html(url) # read the url - you can just paste it here too.
+```
+
+**Start taking elements**
+
+Use inspect element to choose elements to scrape.
+
+```{r message = FALSE}
+# book titles
+titleelem <- html_elements(webpage, css = "div.LandingPage-bookCardTitle")
+title <- html_text(titleelem)
+# book authors
+authorelem <- html_elements(webpage, css = "div.LandingPage-bookCardAuthor")
+author <- html_text(authorelem)
+# book prices
+priceelem <- html_elements(webpage, css = "div.BookSlide-Price")
+price <- html_text(priceelem)
+# that one is really messy so:
+price_stripped <- parse_number(price)
+```
+
+**Create a dataframe**
+
+```{r message = FALSE}
+thriftbooks <- tibble(
+  title = title,
+  author = author, # for some reason this cuts out at a certain point but I'm not going to bother fixing it for this example
+  price = price_stripped
+)
+head(thriftbooks)
+```
+
+## Example 2: slightly less easy (multiple webpages)
+
+Using [eggplant recipes](https://www.turkeysforlife.com/2021/11/turkish-aubergine-eggplant-recipes.html)
+
+**Scrape multiple webpages into one dataframe**. How you do this:\
+1) Make a list of the links you want to scrape\
+2) Write code that will scrape just one of those pages (but that can be applied to any of them)\
+3) Make an empty dataframe\
+4) Put the scrape code from step 2 into a for loop that indexes each item on the link list\
+5) Make a dataframe inside of the for loop and bind/append it to the dataframe (from step 3) that was made outside the loop\
+
+I explain this again in different wording in the example in the next tab 👍.
+
+These are the steps I follow here, although I put #2 straight into #4. You can copy the code in my for loop and paste it outside of it, it will work fine for individual pages\
+
+```{r message = FALSE}
+url <- "https://www.turkeysforlife.com/2021/11/turkish-aubergine-eggplant-recipes.html"
+webpage <- read_html(url)
+# here's a method to take all the links off a page, which I'm not using, but it can be helfpul to experiment with:
+# recipelinks <- webpage %>% html_nodes("a") %>% html_attr("href")
+```
+
+**Take links**
+
+This is the part that requires the browser tool inspect element. In your browser (I recommend Firefox), right click anywhere on your website and click "Inspect Element". It works best to highlight the text you want to scrape and then open inspect element.
+
+This is the way I usually take elements:
+
+![](https://i.imgur.com/dXKAaPX.png)
+
+Notice the box that appears over the selected element on the page - that is the CSS that you want to copy. You can find it over on the side in the highlighted block in inspect element, just in a slightly different format:
+
+![](https://i.imgur.com/uUBKaKA.png)
+
+Copy the highlighted CSS, and adjust the formatting to match what you see on the page:
+
+```{r message = FALSE}
+string <- "wprm-recipe-roundup-link wprm-recipe-link wprm-block-text-normal wprm-recipe-roundup-link-inline-button wprm-recipe-link-inline-button wprm-color-accent"
+string <- gsub(" ", ".", string) # replace all spaces with periods
+string # copy this
+```
+
+This piece of css comes from a block that starts with `<a class=`, so put `a.` before the above string:
+
+```{r message = FALSE}
+linkel <- html_elements(webpage, css = "a.wprm-recipe-roundup-link.wprm-recipe-link.wprm-block-text-normal.wprm-recipe-roundup-link-inline-button.wprm-recipe-link-inline-button.wprm-color-accent")
+links <- linkel %>%  html_attr("href") # the important part
+links
+```
+
+If the block starts with `div`, you'll type `div.` first, if it starts with `h3`, you'll type `h3.` first, etc.
+
+Sometimes, `html_elements` piped to `html_attr("href")` only takes a single link. In that case it usually works to instead pipe `html_elements` to `html_nodes("a")` and then `html_attr("href")`. You just need to experiment until you get it because there is always a way.
+
+> *!! Extra tip !!*
+>
+> Here's [another method](https://imgur.com/a/copy-css-selector-8ZlpxvV) to extract elements - by copying the CSS Selector. Sometimes using the manual method I described above will give you a list instead of the single element that you want, and when that happens, the CSS Selector method is usually better. However, if you're scraping multiple pages, then the CSS selector method can be a problem because sometimes different pages use that same bit of CSS to refer to different things. In that case use the manual/class method and find a new way around any issues.
+
+**Create dataframe**
+
+First: make a helpful function that fills in NA for elements that just aren't there (this can prevent errors, so if you're trying to access the CSS for "prep time", but there is no "prep time", it will fill in NA instead of `character(0)`):
+
+```{r message = FALSE}
+NAcheck <- function(x) {
+  if(length(x) == 0) { # if x has no value (length == 0)
+    return(NA) # fill in NA
+  }
+  else { # otherwise
+    return(x) # leave as is
+  }
+}
+```
+
+**Use a for loop to scrape each recipe into a dataframe**, using the links above
+
+If you have never seen a 'for loop' before, it's basically just a block of code that repeats to a certain point. You write `for (repeat this amount of times){}` and then everything within the curly braces is repeated. The code you write inside the loop is just normal R code. I wrote `for (item in 1:12)`. This means that I made a variable called "item" that exists inside the loop and will be assigned values 1 to 12, and everything inside the loop is repeated 12 times.
+
+```{r message = FALSE, warning = FALSE}
+# make an empty tibble outside of the for loop to fill inside it
+eggplantrecipes <- tibble()
+
+for (item in 1:12) {
+  
+  url <- links[item] # index the url to be scraped (each "item" - 1 through 12)
+  webpage <- read_html(url)
+  
+  # next: code you would use to scrape just one recipe. because it's inside a for loop, this code will scrape all 12
+  
+  # html elements
+  titleelem <- html_elements(webpage, css = ".entry-title")
+  updateelem <- html_elements(webpage, css = ".entry-date")
+  courseelem <- html_elements(webpage, css = ".wprm-recipe-course")
+  rateelem <- html_elements(webpage, css = ".wprm-recipe-rating-average")
+  prepelem <- html_elements(webpage, css = ".wprm-recipe-prep_time")
+  cookelem <- html_elements(webpage, css = ".wprm-recipe-cook_time")
+  servingselem <- html_elements(webpage, css = ".wprm-recipe-servings")
+
+  # html text
+  # using the NAcheck() function here because these are what are going to be put into the dataframe. this way, you get NA's instead of blank characters that will give errors. you can also use this function when putting the elements into the dataframe instead of using it here.
+  title <- NAcheck(html_text(titleelem))
+  update <- NAcheck(html_text(updateelem))
+  rate <- NAcheck(html_text(rateelem))
+  course <- NAcheck(html_text(courseelem))
+  prep <- NAcheck(html_text(prepelem))
+  cook <- NAcheck(html_text(cookelem))
+  servings <- NAcheck(html_text(servingselem))
+  course <- NAcheck(html_text(courseelem))
+
+  # make a dataframe
+  # this only makes a dataframe for ONE recipe because it is being made inside of the loop
+  recipe <- tibble(
+    title = title,
+    lastupdated = update,
+    course = course, 
+    preptime = prep,
+    cooktime = cook,
+    servings = servings,
+    link = url
+  )
+  
+    # join this to dataframe made outside of loop (because it's outside the loop, each loop through this will add another row to it)
+    eggplantrecipes <- bind_rows(eggplantrecipes, recipe)
+
+}
+
+# now download it
+write_csv(eggplantrecipes, "eggplantrecipes.csv")
+```
+
+## Example 3: multiple pages (technical)
+
+Scraping [adoptable cats in Maryland](https://cat.rescueme.org/Maryland). Try this code with different animals on the website and it should work!\
+
+I chose this website because it sounded fun but the site is actually terribly formatted. I had to do a lot of data cleaning in the final loop that scrapes the individual adoption listings. I have several other examples of scraping multipage websites on my GitHub which are overall simpler (but they don't have cats).
+
+Similar to what I did in the last example, I'm doing this in two parts with two loops:\
+1. Make a list of links\
+2. Send the items in the list through scraping code
+
+#### **Part 1: Create list of links**
+
+To scrape multiple pages from one site, you need to set up a loop that reads each page and extracts the links you want off each one. To get the next page, you'll do something like this: `paste0("website.com/page/", pagenumber)`. Different websites have different patterns to show page number.
+
+```{r message = FALSE, warning=FALSE}
+baseurl <- "https://cat.rescueme.org/Maryland" # this is the URL for the first page, which you will paste the next pages onto
+kittylinks <- tibble()
+
+
+for (page in 1:20) { # when I did this the first time there were only 3 pages but you can make this loop as long as you want.
+  
+  # for peace of mind I recommend making the loop tell you where it is
+  print(page)
+  
+  if (page == 1) { # for the first loop (first "page")
+    # the first page is the "baseurl", read it as is
+    url <- baseurl
+    webpage <- read_html(baseurl)
+  }
+  if (page > 1) { # for every page after 1
+    # paste the next page onto the url for the first page
+    url <- paste0(baseurl, "#all", page) # paste0 makes a string with no spaces
+    webpage <- read_html(url)
+  }
+  
+  # now scrape all of the links
+  link <- html_elements(webpage, css = "div.card") %>% 
+    html_nodes("a") %>%
+    html_attr("href") 
+  
+  # make a dataframe to hold the links
+  loopedlinks <- tibble(link = link)
+  
+  # bind the rows from the table above to the dataframe made outside the loop
+  kittylinks <- bind_rows(kittylinks, loopedlinks)
+}
+# the list in the output above this is from print(page)
+kittylinks$link[1:10]
+```
+The table includes things that aren't actually links, so I need to filter to just links (rows that include `https://post.rescueme.org/`)
+
+**Clean up links**
+
+```{r message = FALSE, warning=FALSE}
+
+kittylinks <- kittylinks %>% 
+  filter(grepl("https://post.rescueme.org/", link))
+  
+# sometimes links are repeated on multiple pages, I always make sure to remove any duplicates
+kittylinks <- kittylinks %>% 
+  distinct(.keep_all = TRUE) # this just removes extra copies of rows
+```
+
+
+#### **Part 2: Scrape all pages inside a loop**
+
+When scraping multiple pages, I do these within a for loop:\
+1. Pull URL and read webpage\
+2. Extract elements\
+3. Create a dataframe with these elements (and do any necessary data cleaning)\
+4. Bind dataframe to a dataframe created outside of the loop\
+
+You need to make two dataframes: an empty dataframe outsisde (before) the loop, and a dataframe inside the loop containing the elements you're scraping. The loop will recreate the dataframe inside it with only one row over and over until the loop finishes, so you bind this inner dataframe (using `bind_rows`) to the empty outer dataframe while still inside the loop. This makes every row created attach itself to the outer dataframe.
+
+```{r output = FALSE}
+listedlinks <- kittylinks$link # turn link dataframe into a vector
+adoptablecats <- tibble() 
+library(cowsay)
+
+for (cat in 1:length(listedlinks)) { # length(listedlinks) = total number of links
+  # Step 1: Pull and read URL
+  
+  url <- listedlinks[cat] # index link
+  webpage <- read_html(url) 
+  
+  
+  
+  
+  # Step 2: Extract elements
+  
+  # in the examples before I used html_elements() in one line, then html_text() in another. it's faster to just pipe them.
+  catid <- html_elements(webpage, css = "span.animal-id") %>% html_text()
+  catname <- html_elements(webpage, css = "span.card-pet-name") %>% html_text() 
+  catinfo <- html_elements(webpage, css = "div.large-12.columns") %>% html_text2() 
+  # that came out as a vector. the first element is relevant, the rest are random words, so reduce it to just the first element:
+  catinfo <- catinfo[1] # this will need to be cleaned further
+  description <- html_elements(webpage, css = "p.animal-description") %>% html_text()
+  healthinfo <- html_elements(webpage, css = "ul.description-list:nth-child(2)") %>% html_text2() # I used "Copy CSS Selector" to get this
+  locationcontact <- html_elements(webpage, css = "div.contact-content") %>% html_text2()
+  specialnotice <- html_elements(webpage, css = "div.adopted-notice.small") %>% html_text()
+  
+  # "catinfo", "healthinfo", and "locationcontact" are all vectors, and will need special cleaning.
+  
+  
+  
+  
+  # Step 3: Clean data and make new dataframe
+  
+  # this might be very confusing. it's data cleaning, not web scraping, and this website's format sucks, so you can skip this, or if you're very invested or currently trying to learn data cleaning, you can copy it and follow along closely
+
+  # strings first
+  health <- gsub("\n", ", ", healthinfo)
+  if (length(health) > 1) { # "health" is a vector on almost all of the pages. this turns it into just one item.
+    health <- paste(health, collapse = "")
+  }
+  if (length(locationcontact) > 0) {
+    strloccon <- str_split(locationcontact, "\r")
+    strl <- strloccon[[1]]
+    strl <- strl[1:2]
+  }
+  
+  # ⚠️ this part is where errors usually occur. I add a line that prints the URL and loop number in case it gives an error and fails in the next line.
+  say(url)
+  message(cat)
+  
+  # data cleaning part 2, with dataframes (there's many ways to do this but I prefer using dataframes. if you're following along, run the lines before the pipes to see what happens with each step)
+  catdetails <- tibble(
+    info = catinfo
+  ) %>% 
+    separate_rows(info, sep = "\n") %>% 
+  # I want to separate them by the ":" to make them into their own columns but the first row doesnt have a ":"
+    mutate(info = if_else(
+    !grepl(":", info), # for rows in the info column that don't contain a ":"
+    paste("Detail1:", info), # add a ":" ...
+    as.character(info) # if it DOES have ":", then it stays exactly as is
+  )) %>% 
+    separate(info, into = c("column1", "column2"), sep = ":") %>%
+    # now change the format of the dataframe by making column1 into columns, with column2 as the rows belonging to those columns
+    pivot_wider(names_from = column1, values_from = column2) %>% 
+    # time to add other details! now that we've done that, we still have more to fix! 😸
+    mutate(
+      Name = NAcheck(catname),
+      Health = NAcheck(health),
+      Notice = NAcheck(specialnotice),
+      ID = catid,
+      Link = url
+    ) %>% 
+    relocate(Name, .before = Detail1) %>% 
+    relocate(Notice, .after = Detail1)
+  # cleaning the contact info string (which used to be called "locationcontact") as a dataframe, too. it needs to be a separate dataframe to do this.
+  persondetails <- tibble(mycolumn = strl) %>% 
+    mutate(colnames = c("Location", "Contact")) %>% 
+    pivot_wider(names_from = colnames, values_from = mycolumn)
+  # now join the two tables together
+  mycat <- bind_cols(catdetails, persondetails)
+  
+  # that was so complicated. it's usually not that complicated. but I really had to use the retro style cat website
+  
+  
+
+  # Step 4: Bind inner dataframe to outer dataframe
+  
+  adoptablecats <- bind_rows(adoptablecats, mycat)
+  
+}
+
+  
+# download your dataset (and then comment it out)
+# write_csv(adoptablecats, "rescuemecatsmaryland.csv")
+
+```
+
+
+```{r message = FALSE, warning = FALSE}
+head(adoptablecats)
+```
+
+
+The data cleaning can be really annoying, but in my experience, you save yourself a lot of trouble by doing most of your data cleaning in the loop that scrapes your websites.
+
+:::
+
+------------------------------------------------------------------------
+
+**SOME NOTES**
+
+-   If you're having trouble turning something into text (for example, if you're trying to take a list, and the result is just itemitemitem with no value to separate by), try using `html_text2` instead of `html_text`!\
+- The best way to scrape a list is by taking it as a vector string. Taking it as a one item string makes a mess. More info on this in the magnet example on my GitHub...\
+-   Some websites will try to block you from accessing them. If this only happens when using loops to scrape multiple pages on the site, it's probably because you're accessing too many pages too quickly. Include `Sys.sleep` or `purrr::insistently` before `read_html` to add a pause. This usually fixes it.\
+-   If it seems impossible to select an element no matter what you do, check the page source (in your browser, right click + "view page source"). Search for the element you want with ctrl+F. If it's not there, then it's loaded dynamically, and you won't be able to access it with `read_html`. RSelenium/Chromote are options to get around this that I haven't explored very much (`read_html_live` is usually very slow on my computer if I'm trying to scrape multiple pages)\
+-   If you want to scrape just one page and it's saying it can't open the connection, try `read_html_live`
